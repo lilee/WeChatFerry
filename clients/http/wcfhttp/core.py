@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel
 from wcferry import Wcf, WxMsg
 
-__version__ = "39.0.3.0"
+__version__ = "39.0.3.1"
 
 
 class Msg(BaseModel):
@@ -88,7 +88,9 @@ class Http(FastAPI):
             if rsp.status_code != 200:
                 self.LOG.error(f"消息转发失败，HTTP 状态码为: {rsp.status_code}")
             else:
-                self.handle_cb_resp(rsp.json())
+                send = rsp.json().get("send", [])
+                logging.info(f"rsp: {rsp.json()}")
+                self.handle_cb_resp(send)
         except Exception as e:
             self.LOG.error(f"消息转发异常: {e}")
 
@@ -112,15 +114,15 @@ class Http(FastAPI):
             self.LOG.info(f"没有设置回调，打印消息")
             self.wcf.enable_recv_msg(print)
 
-    def handle_cb_resp(self, resp: list):
-        for body in resp:
+    def handle_cb_resp(self, send: list):
+        for body in send:
             type = body.get("type", "")
             if type == "text":
                 receiver = body.get("wxid", None)
                 content = body.get("content", None)
-                atList = body.get("atList", None)
+                # atList = body.get("atList", None)
                 if receiver is not None and content is not None:
-                    ret = self.wcf.send_text(content, receiver, atList)
+                    ret = self.wcf.send_text(content, receiver, "")
                     logging.info(f"Send results: {ret} ({receiver}/{content[:6]}...)")
                 else:
                     logging.info(f"An error occurred, {body}")
