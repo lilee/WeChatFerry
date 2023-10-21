@@ -84,9 +84,11 @@ class Http(FastAPI):
         data["is_group"] = msg.from_group()
 
         try:
-            rsp = requests.post(url=cb, json=data, timeout=30)
+            rsp = requests.post(url=cb, json=data, timeout=60)
             if rsp.status_code != 200:
                 self.LOG.error(f"消息转发失败，HTTP 状态码为: {rsp.status_code}")
+            else:
+                self.handle_cb_resp(rsp.json())
         except Exception as e:
             self.LOG.error(f"消息转发异常: {e}")
 
@@ -109,6 +111,22 @@ class Http(FastAPI):
         else:
             self.LOG.info(f"没有设置回调，打印消息")
             self.wcf.enable_recv_msg(print)
+
+    def handle_cb_resp(self, resp: list):
+        for body in resp:
+            type = body.get("type", "")
+            if type == "text":
+                receiver = body.get("wxid", None)
+                content = body.get("content", None)
+                atList = body.get("atList", None)
+                if receiver is not None and content is not None:
+                    ret = self.wcf.send_text(content, receiver, atList)
+                    logging.info(f"Send results: {ret} ({receiver}/{content[:6]}...)")
+                else:
+                    logging.info(f"An error occurred, {body}")
+            
+            else:
+                logging.info(f"Type not recognized, {body}")
 
     def is_login(self) -> dict:
         """获取登录状态"""

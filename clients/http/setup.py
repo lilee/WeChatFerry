@@ -12,7 +12,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 
 setup(
-    name="wcfhttp",
+    name="adabot",
     version=wcfhttp.core.__version__,
     author="Changhua",
     author_email="lichanghua0821@gmail.com",
