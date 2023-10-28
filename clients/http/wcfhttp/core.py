@@ -120,15 +120,37 @@ class Http(FastAPI):
             if type == "text":
                 receiver = body.get("wxid", None)
                 content = body.get("content", None)
-                # atList = body.get("atList", None)
+                atList = body.get("atList", [])
+                atList_str = ",".join(atList)
                 if receiver is not None and content is not None:
-                    ret = self.wcf.send_text(content, receiver, "")
+                    if len(atList) > 0:
+                        content = f"{atList_str} /n{content}"
+                    ret = self.wcf.send_text(content, receiver, atList_str)
                     logging.info(f"Send results: {ret} ({receiver}/{content[:6]}...)")
                 else:
                     logging.info(f"An error occurred, {body}")
             
             else:
                 logging.info(f"Type not recognized, {body}")
+
+    def get_nickname(self, atList: list[str]) -> list[str]:
+        try:
+            rsp = self.query_sql('MicroMsg.db', f'SELECT NickName,UserName FROM Contact;')
+            logging.info(rsp)
+            # {"status": 0, "message": "成功", "data": {"bs64": ret}}
+            if rsp.get('status', -1) != 0:
+                return []
+            contacts = rsp.get('data').get('bs64')
+            result = []
+            for contact in contacts:
+                if contact.get('UserName', None) in atList:
+                    nickname = contact.get('NickName', None)
+                    if nickname is not None:
+                        result.append(f"@{nickname} ")
+            return result
+        except Exception as e:
+            logging.error('get_nickname error', e)
+            return None
 
     def is_login(self) -> dict:
         """获取登录状态"""
