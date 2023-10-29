@@ -67,6 +67,9 @@ class Http(FastAPI):
 
         self.add_api_route("/chatroom-member", self.del_chatroom_members, methods=["DELETE"], summary="删除群成员")
 
+        self.contacts = []
+        self.update_contacts()
+
     def _forward_msg(self, msg: WxMsg, cb: str):
         data = {}
         data["id"] = msg.id
@@ -115,6 +118,7 @@ class Http(FastAPI):
             self.wcf.enable_recv_msg(print)
 
     def handle_cb_resp(self, send: list):
+        self.update_contacts()
         for body in send:
             type = body.get("type", "")
             if type == "text":
@@ -122,9 +126,11 @@ class Http(FastAPI):
                 content = body.get("content", None)
                 atList = body.get("atList", [])
                 atList_str = ",".join(atList)
+                nickNames = self.get_nickname(atList=atList)
+                nickNames_str = " ".join(nickNames)
                 if receiver is not None and content is not None:
                     if len(atList) > 0:
-                        content = f"{atList_str} /n{content}"
+                        content = f"{nickNames_str} {content}"
                     ret = self.wcf.send_text(content, receiver, atList_str)
                     logging.info(f"Send results: {ret} ({receiver}/{content[:6]}...)")
                 else:
@@ -133,16 +139,10 @@ class Http(FastAPI):
             else:
                 logging.info(f"Type not recognized, {body}")
 
-    def get_nickname(self, atList: list[str]) -> list[str]:
+    def get_nickname(self, atList: list) -> list:
         try:
-            rsp = self.query_sql('MicroMsg.db', f'SELECT NickName,UserName FROM Contact;')
-            logging.info(rsp)
-            # {"status": 0, "message": "成功", "data": {"bs64": ret}}
-            if rsp.get('status', -1) != 0:
-                return []
-            contacts = rsp.get('data').get('bs64')
             result = []
-            for contact in contacts:
+            for contact in self.contacts:
                 if contact.get('UserName', None) in atList:
                     nickname = contact.get('NickName', None)
                     if nickname is not None:
@@ -151,6 +151,12 @@ class Http(FastAPI):
         except Exception as e:
             logging.error('get_nickname error', e)
             return None
+        
+    def update_contacts(self):
+        rsp = self.query_sql('MicroMsg.db', f'SELECT NickName,UserName FROM Contact;')
+        if rsp.get('status', -1) != 0:
+            return
+        self.contacts = rsp.get('data').get('bs64')
 
     def is_login(self) -> dict:
         """获取登录状态"""
