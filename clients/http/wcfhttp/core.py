@@ -6,7 +6,7 @@ import logging
 from queue import Empty
 from threading import Thread
 from typing import Any
-
+from time import sleep
 import requests
 from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel
@@ -67,8 +67,14 @@ class Http(FastAPI):
 
         self.add_api_route("/chatroom-member", self.del_chatroom_members, methods=["DELETE"], summary="删除群成员")
 
-        self.contacts = []
+        self.add_api_route("/get_file", self.get_file, methods=["GET"], summary="获取文件")
+
+        self.contacts = {}
         self.update_contacts()
+        self.user_info = self.wcf.get_user_info()
+        self.home = self.user_info.get('home')
+        self.wxid = self.user_info.get('wxid')
+        print(self.wcf.get_user_info())
 
     def _forward_msg(self, msg: WxMsg, cb: str):
         data = {}
@@ -85,7 +91,12 @@ class Http(FastAPI):
         data["is_at"] = msg.is_at(self.wcf.self_wxid)
         data["is_self"] = msg.from_self()
         data["is_group"] = msg.from_group()
-
+        print(f"msg.extra: {msg.extra}")
+        if msg.type == 3: #img
+            sleep(2)
+            jpg_file = msg.extra.replace('.dat', '.jpg')
+            ret = self.wcf.decrypt_image(msg.extra, jpg_file)
+            print(f"ret {ret}")
         try:
             rsp = requests.post(url=cb, json=data, timeout=60)
             if rsp.status_code != 200:
@@ -118,45 +129,59 @@ class Http(FastAPI):
             self.wcf.enable_recv_msg(print)
 
     def handle_cb_resp(self, send: list):
-        self.update_contacts()
         for body in send:
+            receiver = body.get("wxid", None)
+            content = body.get("content", None)
+            if receiver is None or content is None:
+                logging.info(f"An error occurred, {body}")
+                return
+            
             type = body.get("type", "")
             if type == "text":
-                receiver = body.get("wxid", None)
-                content = body.get("content", None)
                 atList = body.get("atList", [])
-                atList_str = ",".join(atList)
-                nickNames = self.get_nickname(atList=atList)
-                nickNames_str = " ".join(nickNames)
-                if receiver is not None and content is not None:
-                    if len(atList) > 0:
+                if len(atList) > 0:
+                    nickNames, enable_atList = self.get_nicknames(atList=atList)
+                    enable_atList_str = ",".join(enable_atList)
+                    nickNames_str = " ".join(nickNames)
+                    if len(nickNames) == 0:
                         content = f"{nickNames_str} {content}"
-                    ret = self.wcf.send_text(content, receiver, atList_str)
-                    logging.info(f"Send results: {ret} ({receiver}/{content[:6]}...)")
-                else:
-                    logging.info(f"An error occurred, {body}")
-            
+                    ret = self.wcf.send_text(content, receiver, enable_atList_str)
+                    logging.info(f"Send results: {ret} ({receiver}/{content[:20]}...)")
+            elif type == "image" or type == "file":
+                ret = self.wcf.send_file(content, receiver)
+                logging.info(f"Send results: {ret} ({receiver}/{content[:20]}...)")
             else:
                 logging.info(f"Type not recognized, {body}")
 
-    def get_nickname(self, atList: list) -> list:
+    def get_nicknames(self, atList: list) -> (list, list):
         try:
-            result = []
-            for contact in self.contacts:
-                if contact.get('UserName', None) in atList:
-                    nickname = contact.get('NickName', None)
+            nicknames = []
+            enable_atList = []
+            for at_wxid in atList:
+                nickname = self.contacts.get(at_wxid, None)
+                if nickname is not None:
+                    nicknames.append(f"@{nickname} ")
+                    enable_atList.append(at_wxid)
+                else:
+                    self.update_contacts()
+                    nickname = self.contacts.get(at_wxid, None)
                     if nickname is not None:
-                        result.append(f"@{nickname} ")
-            return result
+                        nicknames.append(f"@{nickname} ")
+                        enable_atList.append(at_wxid)
+                    else:
+                        logging.error(f"can't find nickname ({at_wxid})")
+            return nicknames, enable_atList
         except Exception as e:
             logging.error('get_nickname error', e)
-            return None
+            return [], []
         
     def update_contacts(self):
-        rsp = self.query_sql('MicroMsg.db', f'SELECT NickName,UserName FROM Contact;')
+        rsp = self.query_sql('MicroMsg.db', 'SELECT NickName,UserName FROM Contact;')
         if rsp.get('status', -1) != 0:
             return
-        self.contacts = rsp.get('data').get('bs64')
+        contacts = rsp.get('data').get('bs64')
+        for contact in contacts:
+            self.contacts[contact.get('UserName')] = contact.get('NickName')
 
     def is_login(self) -> dict:
         """获取登录状态"""
@@ -324,7 +349,7 @@ class Http(FastAPI):
         if ret:
             for row in ret:
                 for k, v in row.items():
-                    print(k, type(v))
+                    # print(k, type(v))
                     if type(v) is bytes:
                         row[k] = base64.b64encode(v)
             return {"status": 0, "message": "成功", "data": {"bs64": ret}}

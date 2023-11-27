@@ -5,19 +5,20 @@ import logging
 import argparse
 
 import uvicorn
-from wcferry import Wcf
-from wcfhttp import Http, __version__
 
+from wcferry import Wcf
+# from wcfhttp import Http, __version__
+from core import Http
 
 def main():
     parse = argparse.ArgumentParser()
-    parse.add_argument("-v", "--version", action="version", version=f"{__version__}")
+    # parse.add_argument("-v", "--version", action="version", version=f"{__version__}")
     parse.add_argument("--wcf_host", type=str, default=None, help="WeChatFerry 监听地址，默认本地启动监听 0.0.0.0")
     parse.add_argument("--wcf_port", type=int, default=10086, help="WeChatFerry 监听端口 (同时占用 port + 1 端口)，默认 10086")
     parse.add_argument("--wcf_debug", type=bool, default=True, help="是否打开 WeChatFerry 调试开关")
     parse.add_argument("--host", type=str, default="0.0.0.0", help="wcfhttp 监听地址，默认监听 0.0.0.0")
-    parse.add_argument("--port", type=int, default=9999, help="wcfhttp 监听端口，默认 9999")
-    parse.add_argument("--cb", type=str, default="", help="接收消息回调地址")
+    parse.add_argument("--port", type=int, default=5555, help="wcfhttp 监听端口，默认 9999")
+    parse.add_argument("--cb", type=str, default="http://192.168.50.133:3000/api/botCallback/wxid_gh7ndw4qlyzw21", help="接收消息回调地址")
 
     logging.basicConfig(level="INFO", format="%(asctime)s %(message)s")
     args = parse.parse_args()
