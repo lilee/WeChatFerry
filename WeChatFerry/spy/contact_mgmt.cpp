@@ -5,6 +5,7 @@
 #include "log.h"
 #include "util.h"
 
+using namespace std;
 extern WxCalls_t g_WxCalls;
 extern DWORD g_WeChatWinDllAddr;
 
@@ -90,7 +91,7 @@ vector<RpcContact_t> GetContacts()
     return contacts;
 }
 
-int AcceptNewFriend(std::string v3, std::string v4, int scene)
+int AcceptNewFriend(string v3, string v4, int scene)
 {
     int success = 0;
 
@@ -103,18 +104,11 @@ int AcceptNewFriend(std::string v3, std::string v4, int scene)
     char nullbuffer[0x3CC] = { 0 };
 
     LOG_DEBUG("\nv3: {}\nv4: {}\nscene: {}", v3, v4, scene);
-    WxString_t wxV3   = { 0 };
-    WxString_t wxV4   = { 0 };
-    std::wstring wsV3 = String2Wstring(v3);
-    std::wstring wsV4 = String2Wstring(v4);
 
-    wxV3.text     = (wchar_t *)wsV3.c_str();
-    wxV3.size     = wsV3.size();
-    wxV3.capacity = wsV3.capacity();
-
-    wxV4.text     = (wchar_t *)wsV4.c_str();
-    wxV4.size     = wsV4.size();
-    wxV4.capacity = wsV4.capacity();
+    wstring wsV3 = String2Wstring(v3);
+    wstring wsV4 = String2Wstring(v4);
+    WxString wxV3(wsV3);
+    WxString wxV4(wsV4);
 
     __asm {
         pushad;
@@ -146,4 +140,46 @@ int AcceptNewFriend(std::string v3, std::string v4, int scene)
     }
 
     return success; // 成功返回 1
+}
+
+/*没啥用，非好友获取不到*/
+RpcContact_t GetContactByWxid(string wxid)
+{
+    RpcContact_t contact;
+    char buff[0x440] = { 0 };
+    wstring wsWxid   = String2Wstring(wxid);
+    WxString pri(wsWxid);
+    DWORD contact_mgr_addr  = g_WeChatWinDllAddr + 0x75A4A0;
+    DWORD get_contact_addr  = g_WeChatWinDllAddr + 0xC04E00;
+    DWORD free_contact_addr = g_WeChatWinDllAddr + 0xEA7880;
+    __asm {
+        PUSHAD
+        PUSHFD
+        CALL       contact_mgr_addr
+        LEA        ECX,buff
+        PUSH       ECX
+        LEA        ECX,pri
+        PUSH       ECX
+        MOV        ECX,EAX
+        CALL       get_contact_addr
+        POPFD
+        POPAD
+    }
+
+    contact.wxid   = wxid;
+    contact.code   = GetStringByWstrAddr((DWORD)buff + g_WxCalls.contact.wxCode);
+    contact.remark = GetStringByWstrAddr((DWORD)buff + g_WxCalls.contact.wxRemark);
+    contact.name   = GetStringByWstrAddr((DWORD)buff + g_WxCalls.contact.wxName);
+    contact.gender = GET_DWORD((DWORD)buff + 0x148);
+
+    __asm {
+        PUSHAD
+        PUSHFD
+        LEA        ECX,buff
+        CALL       free_contact_addr
+        POPFD
+        POPAD
+    }
+
+    return contact;
 }

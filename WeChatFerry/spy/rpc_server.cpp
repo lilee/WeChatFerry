@@ -240,7 +240,7 @@ bool func_send_img(char *path, char *receiver, uint8_t *out, size_t *len)
 bool func_send_file(char *path, char *receiver, uint8_t *out, size_t *len)
 {
     Response rsp   = Response_init_default;
-    rsp.func       = Functions_FUNC_SEND_IMG;
+    rsp.func       = Functions_FUNC_SEND_FILE;
     rsp.which_msg  = Response_status_tag;
     rsp.msg.status = 0;
 
@@ -427,7 +427,7 @@ bool func_disable_recv_txt(uint8_t *out, size_t *len)
 bool func_exec_db_query(char *db, char *sql, uint8_t *out, size_t *len)
 {
     Response rsp  = Response_init_default;
-    rsp.func      = Functions_FUNC_GET_DB_TABLES;
+    rsp.func      = Functions_FUNC_EXEC_DB_QUERY;
     rsp.which_msg = Response_rows_tag;
 
     DbRows_t rows                  = ExecDbQuery(db, sql);
@@ -447,7 +447,7 @@ bool func_exec_db_query(char *db, char *sql, uint8_t *out, size_t *len)
 bool func_accept_friend(char *v3, char *v4, int32_t scene, uint8_t *out, size_t *len)
 {
     Response rsp   = Response_init_default;
-    rsp.func       = Functions_FUNC_SEND_IMG;
+    rsp.func       = Functions_FUNC_ACCEPT_FRIEND;
     rsp.which_msg  = Response_status_tag;
     rsp.msg.status = 0;
 
@@ -511,16 +511,62 @@ bool func_refresh_pyq(uint64_t id, uint8_t *out, size_t *len)
     return true;
 }
 
+bool func_download_attach(AttachMsg att, uint8_t *out, size_t *len)
+{
+    Response rsp  = Response_init_default;
+    rsp.func      = Functions_FUNC_DOWNLOAD_ATTACH;
+    rsp.which_msg = Response_str_tag;
+
+    uint64_t id  = att.id;
+    string thumb = string(att.thumb ? att.thumb : "");
+    string extra = string(att.extra ? att.extra : "");
+
+    rsp.msg.status = DownloadAttach(id, thumb, extra);
+
+    pb_ostream_t stream = pb_ostream_from_buffer(out, *len);
+    if (!pb_encode(&stream, Response_fields, &rsp)) {
+        LOG_ERROR("Encoding failed: {}", PB_GET_ERROR(&stream));
+        return false;
+    }
+    *len = stream.bytes_written;
+
+    return true;
+}
+
+bool func_get_contact_info(string wxid, uint8_t *out, size_t *len)
+{
+    /*借用 Functions_FUNC_GET_CONTACTS */
+    Response rsp  = Response_init_default;
+    rsp.func      = Functions_FUNC_GET_CONTACT_INFO;
+    rsp.which_msg = Response_contacts_tag;
+
+    vector<RpcContact_t> contacts;
+    contacts.push_back(GetContactByWxid(wxid));
+
+    rsp.msg.contacts.contacts.funcs.encode = encode_contacts;
+    rsp.msg.contacts.contacts.arg          = &contacts;
+
+    pb_ostream_t stream = pb_ostream_from_buffer(out, *len);
+    if (!pb_encode(&stream, Response_fields, &rsp)) {
+        LOG_ERROR("Encoding failed: {}", PB_GET_ERROR(&stream));
+        return false;
+    }
+    *len = stream.bytes_written;
+
+    return true;
+}
+
 bool func_decrypt_image(char *src, char *dst, uint8_t *out, size_t *len)
 {
-    Response rsp   = Response_init_default;
-    rsp.func       = Functions_FUNC_DECRYPT_IMAGE;
-    rsp.which_msg  = Response_status_tag;
-    rsp.msg.status = 0;
+    Response rsp  = Response_init_default;
+    rsp.func      = Functions_FUNC_DECRYPT_IMAGE;
+    rsp.which_msg = Response_str_tag;
 
-    rsp.msg.status = (int)DecryptImage(src, dst);
-    if (rsp.msg.status != 1) {
-        LOG_ERROR("DecryptImage failed.");
+    if ((src != nullptr) && (dst != nullptr)) {
+        string path = DecryptImage(src, dst);
+        rsp.msg.str = (char *)path.c_str();
+    } else {
+        rsp.msg.str = (char *)"";
     }
 
     pb_ostream_t stream = pb_ostream_from_buffer(out, *len);
@@ -681,6 +727,16 @@ static bool dispatcher(uint8_t *in, size_t in_len, uint8_t *out, size_t *out_len
         case Functions_FUNC_REFRESH_PYQ: {
             LOG_DEBUG("[Functions_FUNC_REFRESH_PYQ]");
             ret = func_refresh_pyq(req.msg.ui64, out, out_len);
+            break;
+        }
+        case Functions_FUNC_DOWNLOAD_ATTACH: {
+            LOG_DEBUG("[Functions_FUNC_DOWNLOAD_ATTACH]");
+            ret = func_download_attach(req.msg.att, out, out_len);
+            break;
+        }
+        case Functions_FUNC_GET_CONTACT_INFO: {
+            LOG_DEBUG("[Functions_FUNC_GET_CONTACT_INFO]");
+            ret = func_get_contact_info(req.msg.str, out, out_len);
             break;
         }
         case Functions_FUNC_DECRYPT_IMAGE: {

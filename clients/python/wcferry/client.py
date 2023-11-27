@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-__version__ = "39.0.3.0"
+__version__ = "39.0.6.0"
 
 import atexit
 import base64
@@ -40,7 +40,7 @@ def _retry():
                     logerror(e)
                     ret = wcf_pb2.Response()
             except Exception as e:  # 其他异常，退出
-                logerror(e)
+                logerror(f"Exiting... {e}")
                 sys.exit(-1)
 
             return ret
@@ -84,8 +84,8 @@ class Wcf():
 
         # 连接 RPC
         self.cmd_socket = pynng.Pair1()  # Client --> Server，发送消息
-        self.cmd_socket.send_timeout = 2000  # 发送 2 秒超时
-        self.cmd_socket.recv_timeout = 2000  # 接收 2 秒超时
+        self.cmd_socket.send_timeout = 5000  # 发送 5 秒超时
+        self.cmd_socket.recv_timeout = 5000  # 接收 5 秒超时
         try:
             self.cmd_socket.dial(self.cmd_url, block=True)
         except Exception as e:
@@ -93,8 +93,8 @@ class Wcf():
             os._exit(-2)
 
         self.msg_socket = pynng.Pair1()  # Server --> Client，接收消息
-        self.msg_socket.send_timeout = 2000  # 发送 2 秒超时
-        self.msg_socket.recv_timeout = 2000  # 接收 2 秒超时
+        self.msg_socket.send_timeout = 5000  # 发送 5 秒超时
+        self.msg_socket.recv_timeout = 5000  # 接收 5 秒超时
         self.msg_url = self.cmd_url.replace(str(self.port), str(self.port + 1))
 
         atexit.register(self.cleanup)  # 退出的时候停止消息接收，防止资源占用
@@ -580,22 +580,103 @@ class Wcf():
         rsp = self._send_request(req)
         return rsp.status
 
-    def decrypt_image(self, src: str, dst: str) -> bool:
+    def download_attach(self, id: int, thumb: str, extra: str) -> int:
+        """下载附件（图片、视频、文件）
+
+        Args:
+            id (int): 消息中 id
+            thumb (str): 消息中的 thumb
+            extra (str): 消息中的 extra
+
+        Returns:
+            int: 0 为成功, 其他失败。
+        """
+        req = wcf_pb2.Request()
+        req.func = wcf_pb2.FUNC_DOWNLOAD_ATTACH  # FUNC_DOWNLOAD_ATTACH
+        req.att.id = id
+        req.att.thumb = thumb
+        req.att.extra = extra
+        rsp = self._send_request(req)
+        return rsp.status
+
+    def get_info_by_wxid(self, wxid: str) -> dict:
+        """通过 wxid 查询微信号昵称等信息
+
+        Args:
+            wxid (str): 联系人 wxid
+
+        Returns:
+            dict: {wxid, code, name, gender}
+        """
+        req = wcf_pb2.Request()
+        req.func = wcf_pb2.FUNC_GET_CONTACT_INFO  # FUNC_GET_CONTACT_INFO
+        req.str = wxid
+        rsp = self._send_request(req)
+        contacts = json_format.MessageToDict(rsp.contacts).get("contacts", [])
+
+        contact = {}
+        for cnt in contacts:
+            gender = cnt.get("gender", "")
+            if gender == 1:
+                gender = "男"
+            elif gender == 2:
+                gender = "女"
+            else:
+                gender = ""
+            contact = {
+                "wxid": cnt.get("wxid", ""),
+                "code": cnt.get("code", ""),
+                "remark": cnt.get("remark", ""),
+                "name": cnt.get("name", ""),
+                "country": cnt.get("country", ""),
+                "province": cnt.get("province", ""),
+                "city": cnt.get("city", ""),
+                "gender": gender}
+
+        return contact
+
+    def decrypt_image(self, src: str, dir: str) -> str:
         """解密图片:
 
         Args:
             src (str): 加密的图片路径
-            dst (str): 解密的图片路径
+            dir (str): 保存图片的目录
 
         Returns:
-            bool: 是否成功
+            str: 解密图片的保存路径
         """
         req = wcf_pb2.Request()
         req.func = wcf_pb2.FUNC_DECRYPT_IMAGE  # FUNC_DECRYPT_IMAGE
         req.dec.src = src
-        req.dec.dst = dst
+        req.dec.dst = dir
         rsp = self._send_request(req)
-        return rsp.status == 1
+        return rsp.str
+
+    def download_image(self, id: int, extra: str, dir: str, timeout: int = 30) -> str:
+        """下载图片
+
+        Args:
+            id (int): 消息中 id
+            extra (str): 消息中的 extra
+            dir (str): 存放图片的目录
+            timeout (int): 超时时间（秒）
+
+        Returns:
+            str: 成功返回存储路径；空字符串为失败，原因见日志。
+        """
+        if self.download_attach(id, "", extra) != 0:
+            self.LOG.error(f"下载失败")
+            return ""
+        cnt = 0
+        while cnt < 2 * timeout:
+            path = self.decrypt_image(extra, dir)
+            if path:
+                return path
+            sleep(0.5)
+            cnt += 1
+
+        self.LOG.error(f"下载超时")
+        return ""
 
     def add_chatroom_members(self, roomid: str, wxids: str) -> int:
         """添加群成员

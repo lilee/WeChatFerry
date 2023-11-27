@@ -14,6 +14,7 @@
 #define OFFSET_DB_BIZCHAT_MSG  0x1120
 #define OFFSET_DB_FUNCTION_MSG 0x11B0
 #define OFFSET_DB_NAME         0x14
+#define OFFSET_DB_MSG_MGR      0x30403B8
 
 extern DWORD g_WeChatWinDllAddr;
 
@@ -25,14 +26,33 @@ static void GetDbHandle(DWORD base, DWORD offset)
     wchar_t *wsp;
     wsp           = (wchar_t *)(*(DWORD *)(base + offset + OFFSET_DB_NAME));
     string dbname = Wstring2String(wstring(wsp));
-    dbMap[dbname] = *(DWORD *)(base + offset);
+    dbMap[dbname] = GET_DWORD(base + offset);
+}
+
+static void GetMsgDbHandle(DWORD msgMgrAddr)
+{
+    DWORD dbIndex = GET_DWORD(msgMgrAddr + 0x38);
+    DWORD pStart  = GET_DWORD(msgMgrAddr + 0x2C);
+    for (uint32_t i = 0; i < dbIndex; i++) {
+        DWORD dbAddr = GET_DWORD(pStart + i * 0x04);
+        if (dbAddr) {
+            // MSGi.db
+            string dbname = Wstring2String(GET_WSTRING(dbAddr));
+            dbMap[dbname] = GET_DWORD(dbAddr + 0x60);
+
+            // MediaMsgi.db
+            DWORD mmdbAddr  = GET_DWORD(dbAddr + 0x14);
+            string mmdbname = Wstring2String(GET_WSTRING(mmdbAddr + 0x4C));
+            dbMap[mmdbname] = GET_DWORD(mmdbAddr + 0x38);
+        }
+    }
 }
 
 dbMap_t GetDbHandles()
 {
     dbMap.clear();
 
-    DWORD dbInstanceAddr = *(DWORD *)(g_WeChatWinDllAddr + OFFSET_DB_INSTANCE);
+    DWORD dbInstanceAddr = GET_DWORD(g_WeChatWinDllAddr + OFFSET_DB_INSTANCE);
 
     GetDbHandle(dbInstanceAddr, OFFSET_DB_MICROMSG);     // MicroMsg.db
     GetDbHandle(dbInstanceAddr, OFFSET_DB_CHAT_MSG);     // ChatMsg.db
@@ -40,6 +60,8 @@ dbMap_t GetDbHandles()
     GetDbHandle(dbInstanceAddr, OFFSET_DB_EMOTION);      // Emotion.db
     GetDbHandle(dbInstanceAddr, OFFSET_DB_MEDIA);        // Media.db
     GetDbHandle(dbInstanceAddr, OFFSET_DB_FUNCTION_MSG); // Function.db
+
+    GetMsgDbHandle(GET_DWORD(g_WeChatWinDllAddr + OFFSET_DB_MSG_MGR)); // MSGi.db & MediaMsgi.db
 
     return dbMap;
 }
@@ -136,4 +158,40 @@ DbRows_t ExecDbQuery(const string db, const string sql)
         rows.push_back(row);
     }
     return rows;
+}
+
+int GetLocalIdandDbidx(uint64_t id, uint64_t *localId, uint32_t *dbIdx)
+{
+    DWORD msgMgrAddr = GET_DWORD(g_WeChatWinDllAddr + OFFSET_DB_MSG_MGR);
+    DWORD dbIndex    = GET_DWORD(msgMgrAddr + 0x38);
+    DWORD pStart     = GET_DWORD(msgMgrAddr + 0x2C);
+
+    *dbIdx = 0;
+    for (int i = dbIndex - 1; i >= 0; i--) { // 从后往前遍历
+        DWORD dbAddr = GET_DWORD(pStart + i * 0x04);
+        if (dbAddr) {
+            string dbname = Wstring2String(GET_WSTRING(dbAddr));
+            dbMap[dbname] = GET_DWORD(dbAddr + 0x60);
+            string sql    = "SELECT localId FROM MSG WHERE MsgSvrID=" + to_string(id) + ";";
+            DbRows_t rows = ExecDbQuery(dbname, sql);
+            if (rows.empty()) {
+                continue;
+            }
+            DbRow_t row = rows.front();
+            if (row.empty()) {
+                continue;
+            }
+            DbField_t field = row.front();
+            if ((field.column.compare("localId") != 0) && (field.type != 1)) {
+                continue;
+            }
+
+            *localId = strtoul((const char *)(field.content.data()), NULL, 10);
+            *dbIdx   = GET_DWORD(GET_DWORD(dbAddr + 0x18) + 0x144);
+
+            return 0;
+        }
+    }
+
+    return -1;
 }
